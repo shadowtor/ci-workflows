@@ -1,0 +1,166 @@
+name: image-deploy
+
+# Reusable: build a Docker image in GitHub Actions, push it to GHCR, and ask
+# Coolify to deploy it. The host only ever pulls; it never builds.
+#
+# Tags: sha-<commit> (immutable) and a moving tag (the branch name by default).
+# The Coolify app is a *Docker Image* resource tracking the moving tag, so the
+# deploy call needs only a deploy-scoped token. A commit that is already built
+# (e.g. main fast-forwarded to a tested test commit, or a rollback) is retagged
+# with `crane tag`, never rebuilt.
+#
+# Caller must grant `packages: write` and pass `secrets: inherit` (or the
+# COOLIFY_DEPLOY_TOKEN secret). Rollback: re-run the caller with a workflow_dispatch
+# `sha` input pointing at an older commit and pass it through as `sha`.
+on:
+  workflow_call:
+    inputs:
+      image:
+        description: Full image name, lowercase, e.g. ghcr.io/owner/repo or ghcr.io/owner/repo-web
+        type: string
+        required: true
+      context:
+        type: string
+        default: .
+      dockerfile:
+        description: Path to the Dockerfile (relative to the repo root)
+        type: string
+        default: Dockerfile
+      build-args:
+        description: Newline-separated KEY=value build args (public values only; secrets stay in Coolify)
+        type: string
+        default: ""
+      moving-tag:
+        description: Tag the Coolify app tracks. Defaults to the branch name.
+        type: string
+        default: ""
+      sha:
+        description: Commit to deploy. Defaults to the triggering commit; set for rollbacks.
+        type: string
+        default: ""
+      environment:
+        description: GitHub environment holding COOLIFY_DEPLOY_TOKEN (branch-restricted)
+        type: string
+        required: true
+      coolify-app-uuid:
+        description: Coolify Docker Image app to deploy. Empty = push the image only.
+        type: string
+        default: ""
+      coolify-url:
+        type: string
+        default: https://app.coolify.io
+      keep-sha-versions:
+        description: How many sha-only image versions the prune step keeps
+        type: number
+        default: 10
+    secrets:
+      COOLIFY_DEPLOY_TOKEN:
+        required: false
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      sha: ${{ steps.meta.outputs.sha }}
+    steps:
+      - id: meta
+        env:
+          IN_SHA: ${{ inputs.sha }}
+          IN_TAG: ${{ inputs.moving-tag }}
+        run: |
+          echo "sha=${IN_SHA:-$GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          echo "tag=${IN_TAG:-$GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.meta.outputs.sha }}
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: exists
+        env:
+          IMAGE: ${{ inputs.image }}
+          SHA: ${{ steps.meta.outputs.sha }}
+          ROLLBACK: ${{ inputs.sha != '' }}
+        run: |
+          if docker buildx imagetools inspect "$IMAGE:sha-$SHA" >/dev/null 2>&1; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          elif [ "$ROLLBACK" = true ]; then
+            echo "no image for sha-$SHA; a rollback needs an already-built commit"; exit 1
+          fi
+      - if: steps.exists.outputs.found != 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.dockerfile }}
+          push: true
+          platforms: linux/amd64
+          provenance: false
+          sbom: false
+          build-args: ${{ inputs.build-args }}
+          labels: |
+            org.opencontainers.image.revision=${{ steps.meta.outputs.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          tags: |
+            ${{ inputs.image }}:sha-${{ steps.meta.outputs.sha }}
+            ${{ inputs.image }}:${{ steps.meta.outputs.tag }}
+          cache-from: type=gha,scope=${{ inputs.image }}
+          cache-to: type=gha,mode=max,scope=${{ inputs.image }}
+      # crane adds a tag to the existing manifest; `imagetools create` would mint a new
+      # index version that the prune job could later orphan.
+      - if: steps.exists.outputs.found == 'true'
+        uses: imjasonh/setup-crane@v0.7
+      - if: steps.exists.outputs.found == 'true'
+        env:
+          IMAGE: ${{ inputs.image }}
+          SHA: ${{ steps.meta.outputs.sha }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: crane tag "$IMAGE:sha-$SHA" "$TAG"
+
+  deploy:
+    needs: image
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - name: Queue Coolify deploy (deploy-only token)
+        env:
+          BASE: ${{ inputs.coolify-url }}
+          UUID: ${{ inputs.coolify-app-uuid }}
+          TOKEN: ${{ secrets.COOLIFY_DEPLOY_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$UUID" ]; then echo "no Coolify app configured; image pushed only"; exit 0; fi
+          [ -n "$TOKEN" ] || { echo "COOLIFY_DEPLOY_TOKEN missing in environment ${{ inputs.environment }}"; exit 1; }
+          RES=$(curl -fsS -X POST -H "Authorization: Bearer $TOKEN" "$BASE/api/v1/deploy?uuid=$UUID&force=false")
+          DEP=$(echo "$RES" | jq -r '.deployments[0].deployment_uuid // empty')
+          [ -n "$DEP" ] || { echo "no deployment queued: $RES"; exit 1; }
+          echo "queued Coolify deployment $DEP"
+
+  prune:
+    needs: [image, deploy]
+    if: ${{ always() && needs.image.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    continue-on-error: true
+    steps:
+      # Deletes only versions whose tags are all sha-*, keeping the newest N of those.
+      # Never touches untagged versions (child manifests), moving tags, or anything else.
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE: ${{ inputs.image }}
+          KEEP: ${{ inputs.keep-sha-versions }}
+        run: |
+          set -euo pipefail
+          path=${IMAGE#ghcr.io/}; owner=${path%%/*}; pkg=${path#*/}
+          enc=$(jq -rn --arg p "$pkg" '$p|@uri')
+          if gh api "orgs/$owner" >/dev/null 2>&1; then base="orgs/$owner"; else base="users/$owner"; fi
+          gh api --paginate "$base/packages/container/$enc/versions?per_page=100" \
+            --jq '.[] | select((.metadata.container.tags | length) > 0 and (.metadata.container.tags | all(startswith("sha-")))) | .id' \
+            | tail -n +$((KEEP + 1)) \
+            | xargs -r -I{} gh api -X DELETE "$base/packages/container/$enc/versions/{}"
