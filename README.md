@@ -20,6 +20,9 @@ default deploy path for every project (see the `project-stack` skill, "Hosting")
 
 ### Caller example
 
+Call it from `@main`: `main` is the stable line, so fixes reach every repo with no
+version bumps. Changes land on a branch and merge to `main` only once tested.
+
 ```yaml
 name: build-deploy
 on:
@@ -42,7 +45,7 @@ jobs:
   deploy:
     needs: verify
     if: ${{ !cancelled() && (needs.verify.result == 'success' || needs.verify.result == 'skipped') }}
-    uses: shadowtor/ci-workflows/.github/workflows/image-deploy.yml@v1
+    uses: shadowtor/ci-workflows/.github/workflows/image-deploy.yml@main
     with:
       image: ghcr.io/owner/repo
       environment: ${{ github.ref_name == 'main' && 'production' || 'test' }}
