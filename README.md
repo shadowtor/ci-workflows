@@ -13,6 +13,10 @@ default deploy path for every project (see the `project-stack` skill, "Hosting")
   **deploy-only** Coolify token stored as a branch-restricted environment secret.
 - Already-built commits are retagged with `crane`, never rebuilt.
 - Prune deletes only `sha-*`-only versions (newest 10 kept).
+- Docs-only pushes skip build and deploy: if every file changed since the previous
+  push matches `skip-paths` (default `**/*.md`, `docs/**`, `.planning/**`, `.claude/**`),
+  nothing runs. Rollbacks, manual runs and new branches always deploy. Set
+  `skip-paths: ""` to always deploy, or pass your own list.
 
 ### Caller example
 

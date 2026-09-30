@@ -56,6 +56,16 @@ on:
       coolify-url:
         type: string
         default: https://app.coolify.io
+      skip-paths:
+        description: >-
+          Newline-separated git glob pathspecs that never affect the image. A push that
+          changes only these files skips build and deploy. Empty = always deploy.
+        type: string
+        default: |
+          **/*.md
+          docs/**
+          .planning/**
+          .claude/**
       keep-sha-versions:
         description: How many sha-only image versions the prune step keeps
         type: number
@@ -65,7 +75,38 @@ on:
         required: false
 
 jobs:
+  # Docs-only pushes skip build and deploy. Rollbacks, manual runs, new branches and
+  # anything unresolvable always deploy.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      deploy: ${{ steps.diff.outputs.deploy }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          ROLLBACK: ${{ inputs.sha != '' }}
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          SKIP: ${{ inputs.skip-paths }}
+        run: |
+          deploy=true
+          if [ "$ROLLBACK" != true ] && [ "$EVENT" = push ] && [ -n "$SKIP" ] \
+             && [ -n "$BEFORE" ] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ] \
+             && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            mapfile -t excl < <(printf '%s\n' "$SKIP" | sed '/^[[:space:]]*$/d; s/^[[:space:]]*/:(exclude,glob)/')
+            if [ -z "$(git diff --name-only "$BEFORE" "$GITHUB_SHA" -- . "${excl[@]}")" ]; then
+              deploy=false
+              echo "only skip-paths changed since $BEFORE; skipping build and deploy"
+            fi
+          fi
+          echo "deploy=$deploy" >> "$GITHUB_OUTPUT"
+
   image:
+    needs: changes
+    if: needs.changes.outputs.deploy == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
