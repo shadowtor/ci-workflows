@@ -26,8 +26,13 @@ default deploy path for every project (see the `project-stack` skill, "Hosting")
 
 ### Caller example
 
-Call it from `@main`: `main` is the stable line, so fixes reach every repo with no
-version bumps. Changes land on a branch and merge to `main` only once tested.
+Pin the caller to a **full 40-character commit sha** of this repo, not `@main` or a tag.
+This workflow runs with `packages: write` and the caller's secrets (`secrets: inherit` in
+some callers), so a moving ref would let any change here run with those secrets with no
+review in the caller. Add a `github-actions` entry to the caller's `.github/dependabot.yml`
+so sha bumps arrive as reviewable PRs, and read this repo's diff before merging one.
+Changes here land through a PR, wait for the Codex review comment, then merge to `main`;
+callers pick them up by merging their Dependabot PR.
 
 ```yaml
 name: build-deploy
@@ -51,7 +56,7 @@ jobs:
   deploy:
     needs: verify
     if: ${{ !cancelled() && (needs.verify.result == 'success' || needs.verify.result == 'skipped') }}
-    uses: shadowtor/ci-workflows/.github/workflows/image-deploy.yml@main
+    uses: shadowtor/ci-workflows/.github/workflows/image-deploy.yml@<40-char-sha> # note which change this is
     with:
       image: ghcr.io/owner/repo
       environment: ${{ github.ref_name == 'main' && 'production' || 'test' }}
