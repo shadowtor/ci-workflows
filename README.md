@@ -12,10 +12,12 @@ default deploy path for every project (see the `project-stack` skill, "Hosting")
 - Coolify runs a **Docker Image** app tracking the moving tag; the deploy call uses a
   **deploy-only** Coolify token stored as a branch-restricted environment secret.
 - Already-built commits are retagged with `crane`, never rebuilt.
-- Every build receives `GIT_SHA` (the commit being built; the rollback sha on a rollback) and `GIT_BRANCH` as build
-  args. Declare `ARG GIT_SHA` / `ARG GIT_BRANCH` and matching `ENV` lines in the **final** Dockerfile stage (after the
+- Every build receives `GIT_SHA` (the commit being built; the rollback sha on a rollback). `GIT_BRANCH` is passed **only
+  when `variant` equals the branch name**, i.e. when the image tag is already branch-specific; otherwise it is empty,
+  because a commit built on one branch and promoted to another is retagged, not rebuilt, and a baked branch would go
+  stale. Declare `ARG GIT_SHA` / `ARG GIT_BRANCH` and matching `ENV` lines in the **final** Dockerfile stage (after the
   heavy layers, so the cache is not busted) to read them at runtime. Coolify cannot supply these for image apps: it
-  sets `SOURCE_COMMIT=HEAD` and no `COOLIFY_BRANCH`. Ignore a value that is empty, `unknown` or `HEAD`.
+  sets `SOURCE_COMMIT=HEAD` and no `COOLIFY_BRANCH`. Treat an empty, `unknown` or `HEAD` value as absent.
 - Prune deletes only `sha-*`-only versions (newest 10 kept).
 - Docs-only pushes skip build and deploy: if every file changed since the previous
   push matches `skip-paths` (default `**/*.md`, `docs/**`, `.planning/**`, `.claude/**`),

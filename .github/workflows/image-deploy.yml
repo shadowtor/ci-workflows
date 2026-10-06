@@ -153,13 +153,16 @@ jobs:
           platforms: linux/amd64
           provenance: false
           sbom: false
-          # GIT_SHA / GIT_BRANCH are always passed so runtime code (e.g. deploy notifications) can name what is running.
-          # Coolify cannot: for Docker Image apps it injects SOURCE_COMMIT=HEAD and no COOLIFY_BRANCH. A Dockerfile that
-          # does not declare the ARGs just ignores them (BuildKit prints a warning, the build does not fail).
+          # GIT_SHA is always passed so runtime code (e.g. deploy notifications) can name what is running. Coolify cannot:
+          # for Docker Image apps it injects SOURCE_COMMIT=HEAD and no COOLIFY_BRANCH. The commit is safe to bake because
+          # the image is keyed by it. A branch is not: a commit built on one branch and promoted to another is only
+          # retagged (see the exists step), so a baked branch would go stale. GIT_BRANCH is therefore passed only when
+          # the image tag is already branch-specific (variant == branch name); otherwise it is empty.
+          # A Dockerfile that does not declare the ARGs ignores them (BuildKit warns, the build still passes).
           build-args: |
             ${{ inputs.build-args }}
             GIT_SHA=${{ steps.meta.outputs.sha }}
-            GIT_BRANCH=${{ github.ref_name }}
+            GIT_BRANCH=${{ inputs.variant == github.ref_name && github.ref_name || '' }}
           labels: |
             org.opencontainers.image.revision=${{ steps.meta.outputs.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
