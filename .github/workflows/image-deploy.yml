@@ -153,7 +153,13 @@ jobs:
           platforms: linux/amd64
           provenance: false
           sbom: false
-          build-args: ${{ inputs.build-args }}
+          # GIT_SHA / GIT_BRANCH are always passed so runtime code (e.g. deploy notifications) can name what is running.
+          # Coolify cannot: for Docker Image apps it injects SOURCE_COMMIT=HEAD and no COOLIFY_BRANCH. A Dockerfile that
+          # does not declare the ARGs just ignores them (BuildKit prints a warning, the build does not fail).
+          build-args: |
+            ${{ inputs.build-args }}
+            GIT_SHA=${{ steps.meta.outputs.sha }}
+            GIT_BRANCH=${{ github.ref_name }}
           labels: |
             org.opencontainers.image.revision=${{ steps.meta.outputs.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
