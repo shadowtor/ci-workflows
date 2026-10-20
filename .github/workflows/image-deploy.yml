@@ -73,6 +73,9 @@ on:
     secrets:
       COOLIFY_DEPLOY_TOKEN:
         required: false
+      BUILD_SECRET_GLITCHTIP_TOKEN:
+        description: Optional BuildKit secret (id glitchtip_token) for source-map upload; never an ARG or ENV
+        required: false
 
 jobs:
   # Docs-only pushes skip build and deploy. Rollbacks, manual runs, new branches and
@@ -169,6 +172,8 @@ jobs:
           tags: |
             ${{ inputs.image }}:${{ steps.meta.outputs.shatag }}
             ${{ inputs.image }}:${{ steps.meta.outputs.tag }}
+          secrets: |
+            glitchtip_token=${{ secrets.BUILD_SECRET_GLITCHTIP_TOKEN }}
           cache-from: type=gha,scope=${{ inputs.image }}
           cache-to: type=gha,mode=max,scope=${{ inputs.image }}
       # crane adds a tag to the existing manifest; `imagetools create` would mint a new
