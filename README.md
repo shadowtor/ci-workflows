@@ -18,6 +18,8 @@ default deploy path for every project (see the `project-stack` skill, "Hosting")
   stale. Declare `ARG GIT_SHA` / `ARG GIT_BRANCH` and matching `ENV` lines in the **final** Dockerfile stage (after the
   heavy layers, so the cache is not busted) to read them at runtime. Coolify cannot supply these for image apps: it
   sets `SOURCE_COMMIT=HEAD` and no `COOLIFY_BRANCH`. Treat an empty, `unknown` or `HEAD` value as absent.
+- `runs-on` (default `ubuntu-latest`) sets the runner label for all jobs, so a caller can build on a
+  self-hosted runner. Callers should only use a self-hosted label on private repositories.
 - Prune deletes only `sha-*`-only versions (newest 10 kept).
 - Docs-only pushes skip build and deploy: if every file changed since the previous
   push matches `skip-paths` (default `**/*.md`, `docs/**`, `.planning/**`, `.claude/**`),

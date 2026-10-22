@@ -66,6 +66,10 @@ on:
           docs/**
           .planning/**
           .claude/**
+      runs-on:
+        description: Runner label for every job (e.g. a self-hosted label). Defaults to GitHub-hosted ubuntu-latest.
+        type: string
+        default: ubuntu-latest
       keep-sha-versions:
         description: How many sha-only image versions the prune step keeps
         type: number
@@ -81,7 +85,7 @@ jobs:
   # Docs-only pushes skip build and deploy. Rollbacks, manual runs, new branches and
   # anything unresolvable always deploy.
   changes:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs-on }}
     outputs:
       deploy: ${{ steps.diff.outputs.deploy }}
     steps:
@@ -110,7 +114,7 @@ jobs:
   image:
     needs: changes
     if: needs.changes.outputs.deploy == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs-on }}
     permissions:
       contents: read
       packages: write
@@ -189,7 +193,7 @@ jobs:
 
   deploy:
     needs: image
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs-on }}
     environment: ${{ inputs.environment }}
     steps:
       - name: Queue Coolify deploy (deploy-only token)
@@ -209,7 +213,7 @@ jobs:
   prune:
     needs: [image, deploy]
     if: ${{ always() && needs.image.result == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs-on }}
     permissions:
       packages: write
     continue-on-error: true
